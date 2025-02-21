@@ -1,82 +1,63 @@
-FROM arm64v8/node:16-bullseye as builder
+FROM node:14.21.3-bullseye
 
-# crafted and tuned by pierre@ozoux.net and sing.li@rocket.chat
-MAINTAINER buildmaster@rocket.chat
+ARG PUID=2000
+ARG PGID=2000
 
-RUN groupadd -r rocketchat \
-&&  useradd -r -g rocketchat rocketchat \
-&&  mkdir -p /app/uploads \
-&&  chown rocketchat.rocketchat /app/uploads \
-# `RUN mkdir ~/.gnupg
-&& echo "disable-ipv6" >> ~/.gnupg/dirmngr.conf
+# set user/group id for rocketchat
+RUN groupadd -g ${PGID} rocketchat  \
+  && useradd -u ${PUID} -g rocketchat rocketchat \
+  && mkdir -p /app/uploads \
+  && chown rocketchat:rocketchat /app/uploads
 
 VOLUME /app/uploads
 
-# gpg: key 4FD08014: public key "Rocket.Chat Buildmaster <buildmaster@rocket.chat>" imported
-RUN gpg --batch --keyserver keyserver.ubuntu.com --recv-keys  0E163286C20D07B9787EBE9FD7F9D0414FD08104
-
- 
-
-ENV RC_VERSION 4.1.2
+ENV RC_VERSION 6.9.2
 
 WORKDIR /app
-
-RUN apt-get update && apt-get -y install g++ build-essential
-RUN apt-get update && apt-get -y upgrade
-RUN apt-get install -y curl ca-certificates imagemagick --no-install-recommends 
-RUN apt-get install libstdc++6
-RUN apt-get -y install python
-RUN curl -fSL "https://releases.rocket.chat/${RC_VERSION}/download" -o rocket.chat.tgz \
-&&  curl -fSL "https://releases.rocket.chat/${RC_VERSION}/asc" -o rocket.chat.tgz.asc \
-&&  gpg --batch --verify rocket.chat.tgz.asc rocket.chat.tgz \
-&&  tar zxvf rocket.chat.tgz \
-&&  rm rocket.chat.tgz rocket.chat.tgz.asc
-ADD . /app
-
-
-RUN set -x \
- && cd /app/bundle/programs/server \
- && npm install \
- # Start hack for sharp...
- && rm -rf npm/node_modules/sharp \
-# && rm -rf npm/node_modules/grpc \
- && npm install sharp@0.22.1 \
-# && npm install grpc@1.12.2 \
- && mv node_modules/sharp npm/node_modules/sharp \
-# && mv node_modules/grpc npm/node_modules/grpc \
- # End hack for sharp
- && cd npm \
- && npm rebuild bcrypt --build-from-source \
- && npm cache clear --force
-
-FROM arm64v8/node:16-bullseye
-
-RUN groupadd -r rocketchat \
-&&  useradd -r -g rocketchat rocketchat \
-&&  mkdir -p /app 
-
-COPY --from=builder /app /app
-
-RUN  mkdir -p /app/uploads \
-&&   chown rocketchat.rocketchat /app/uploads 
-
-VOLUME /app/uploads
+RUN set -eux \
+  && apt-get update \
+  && apt-get install -y --no-install-recommends fontconfig \
+  && aptMark="$(apt-mark showmanual)" \
+  && apt-get install -y --no-install-recommends g++ make python ca-certificates curl gnupg \
+  && rm -rf /var/lib/apt/lists/* \
+  # gpg: key 4FD08104: public key "Rocket.Chat Buildmaster <buildmaster@rocket.chat>" imported
+  && gpg --batch --keyserver keyserver.ubuntu.com --recv-keys 0E163286C20D07B9787EBE9FD7F9D0414FD08104 \
+  && curl -fSL "https://releases.rocket.chat/${RC_VERSION}/download" -o rocket.chat.tgz \
+  && curl -fSL "https://releases.rocket.chat/${RC_VERSION}/asc" -o rocket.chat.tgz.asc \
+  && gpg --batch --verify rocket.chat.tgz.asc rocket.chat.tgz \
+  && tar zxf rocket.chat.tgz \
+  && rm rocket.chat.tgz rocket.chat.tgz.asc \
+  && cd bundle/programs/server \
+  && set METEOR_SKIP_NPM_REBUILD=1 \
+  && npm install @rocket.chat/forked-matrix-sdk-crypto-nodejs@0.1.0-beta.13 --no-save \
+  && rm -rf npm/node_modules/@rocket.chat/forked-matrix-sdk-crypto-nodejs \
+  && mv -fu node_modules/@rocket.chat/forked-matrix-sdk-crypto-nodejs npm/node_modules/@rocket.chat/ \
+  && unset METEOR_SKIP_NPM_REBUILD \
+  && npm install --production --unsafe-perm \
+  && apt-mark auto '.*' > /dev/null \
+  && apt-mark manual $aptMark > /dev/null \
+  && find /usr/local -type f -executable -exec ldd '{}' ';' \
+  | awk '/=>/ { print $(NF-1) }' \
+  | sort -u \
+  | xargs -r dpkg-query --search \
+  | cut -d: -f1 \
+  | sort -u \
+  | xargs -r apt-mark manual \
+  && apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false \
+  && npm cache clear --force \
+  && chown -R rocketchat:rocketchat /app
 
 USER rocketchat
 
 WORKDIR /app/bundle
 
-
-# needs a mongo instance - defaults to container linking with alias 'mongo'
-ENV DEPLOY_METHOD=docker-arm64 \
-    NODE_ENV=production \
-    MONGO_URL=mongodb://mongo:27017/rocketchat \
-    MONGO_OPLOG_URL=mongodb://mongo:27017/local \
-    HOME=/tmp \
-    PORT=3000 \
-    ROOT_URL=http://localhost:3000 \
-    Accounts_AvatarStorePath=/app/uploads
-
+# needs a mongoinstance - defaults to container linking with alias 'db'
+ENV DEPLOY_METHOD=docker-official \
+  MONGO_URL=mongodb://db:27017/meteor \
+  HOME=/tmp \
+  PORT=3000 \
+  ROOT_URL=http://localhost:3000 \
+  Accounts_AvatarStorePath=/app/uploads
 
 EXPOSE 3000
 
