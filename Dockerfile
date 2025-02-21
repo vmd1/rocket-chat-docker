@@ -1,4 +1,4 @@
-FROM arm64v8/node:12.22.1-stretch as builder
+FROM arm64v8/node:16-bullseye as builder
 
 # crafted and tuned by pierre@ozoux.net and sing.li@rocket.chat
 MAINTAINER buildmaster@rocket.chat
