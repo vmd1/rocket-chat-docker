@@ -49,7 +49,7 @@ RUN set -x \
  && npm rebuild bcrypt --build-from-source \
  && npm cache clear --force
 
-FROM arm64v8/node:12.22.1-stretch
+FROM arm64v8/node:16-bullseye
 
 RUN groupadd -r rocketchat \
 &&  useradd -r -g rocketchat rocketchat \
